@@ -1,0 +1,70 @@
+(mod (
+        MOD_HASH
+        UNDERLYING_COIN_ID
+        UNDERLYING_DELEGATED_PUZZLE_HASH
+        INNER_PUZZLE
+        inner_solution
+    )
+
+    ; With (include *standard-cl-23*)
+    ; We get the error *macros*(13):18-*macros*(13):28: no such callable '__chia__if'
+    (include curry.clib)
+    (include utility_macros.clib)
+
+    (defconstant CREATE_COIN 51)
+    (defconstant SEND_MESSAGE 66)
+
+    (defun-inline wrap_puzzle_hash (MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH inner_puzzle_hash)
+        (curry_hashes MOD_HASH
+            (sha256 1 MOD_HASH)
+            (sha256 1 UNDERLYING_COIN_ID)
+            (sha256 1 UNDERLYING_DELEGATED_PUZZLE_HASH)
+            inner_puzzle_hash
+        )
+    )
+
+    (defun-inline wrap_create_coin (MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH (inner_puzzle_hash . rest))
+        (c CREATE_COIN (c (wrap_puzzle_hash MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH inner_puzzle_hash) rest))
+    )
+
+    ; Wraps CREATE_COIN conditions in the option contract layer
+    (defun morph_conditions (MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH conditions melted exercised)
+        (if conditions
+            (if (= (f (f conditions)) CREATE_COIN)
+                (if (= (f (r (r (f conditions)))) -113)
+                    ; Allow melting but make sure it's tracked for later
+                    (c
+                        (f conditions)
+                        (morph_conditions MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH (r conditions) 1 exercised)
+                    )
+                    ; Wrap the created coin in the option contract layer
+                    (c
+                        (wrap_create_coin MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH (r (f conditions)))
+                        (morph_conditions MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH (r conditions) melted exercised)
+                    )
+                )
+                (if (and (= (f (f conditions)) SEND_MESSAGE) (all
+                        (= (f (r (f conditions))) 23) ; Puzzle hash => coin id
+                        (= (f (r (r (r (f conditions))))) UNDERLYING_COIN_ID) ; Received by underlying coin id
+                    ))
+                    (assert (= (f (r (r (f conditions)))) UNDERLYING_DELEGATED_PUZZLE_HASH)
+                        ; Make note that the option has been exercised
+                        (c
+                            (f conditions)
+                            (morph_conditions MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH (r conditions) melted 1)
+                        )
+                    )
+                    (c
+                        (f conditions)
+                        (morph_conditions MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH (r conditions) melted exercised)
+                    )
+                )
+            )
+            (assert (= melted exercised) ; If melted, must also be exercised and vice versa
+                ()
+            )
+        )
+    )
+
+    (morph_conditions MOD_HASH UNDERLYING_COIN_ID UNDERLYING_DELEGATED_PUZZLE_HASH (a INNER_PUZZLE inner_solution) () ())
+)
