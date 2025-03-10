@@ -6,8 +6,6 @@
         inner_solution
     )
 
-    ; With (include *standard-cl-23*)
-    ; We get the error *macros*(13):18-*macros*(13):28: no such callable '__chia__if'
     (include curry.clib)
     (include utility_macros.clib)
 
